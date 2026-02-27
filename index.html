@@ -1,121 +1,43 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8">
-<title>Animal Emotion — Advanced</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Animal Emotion AI — Stable</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
 
 <style>
-:root {
-  --accent: #00ffd5;
-  --glass: rgba(255,255,255,0.14);
-}
+body { margin:0; background:#0b0f1a; color:white; font-family:sans-serif; overflow:hidden; }
+video, canvas, img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+canvas { pointer-events:none; }
 
-* { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  background: #0b0f1a;
-  color: white;
-  font-family: system-ui, sans-serif;
-  overflow: hidden;
-}
-
-video, canvas, img {
-  position: absolute;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-}
-
-/* UI */
 .topbar {
-  position: fixed;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  display: flex;
-  gap: 8px;
-  z-index: 10;
+  position:fixed; top:12px; left:50%; transform:translateX(-50%);
+  display:flex; gap:8px; z-index:10;
 }
 
-button, label {
-  background: var(--glass);
-  color: white;
-  border: 1px solid rgba(255,255,255,.25);
-  backdrop-filter: blur(10px);
-  border-radius: 12px;
-  padding: 10px 14px;
-  cursor: pointer;
-  font-size: 14px;
+button,label {
+  background:rgba(255,255,255,.15);
+  color:white;
+  border:1px solid rgba(255,255,255,.25);
+  border-radius:12px;
+  padding:10px 14px;
 }
 
-input[type=file] { display: none; }
-
-/* Emotion card */
-.card {
-  position: absolute;
-  padding: 10px 14px;
-  background: var(--glass);
-  border-radius: 14px;
-  backdrop-filter: blur(14px);
-  border: 1px solid rgba(255,255,255,.25);
-}
-
-.confidence {
-  height: 6px;
-  background: rgba(255,255,255,.2);
-  border-radius: 6px;
-  overflow: hidden;
-  margin-top: 6px;
-}
-
-.confidence span {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-}
-
-/* Animations */
-.playful { animation: bounce 1.2s infinite; }
-.angry { animation: shake .4s infinite; }
-.calm { animation: pulse 2s infinite; }
-
-@keyframes bounce {
-  0%,100%{transform:translateY(0)}
-  50%{transform:translateY(-6px)}
-}
-@keyframes shake {
-  0%{transform:translateX(0)}
-  25%{transform:translateX(-4px)}
-  50%{transform:translateX(4px)}
-}
-@keyframes pulse {
-  0%{opacity:.9}
-  50%{opacity:1}
-}
-
-/* Mobile tweaks */
-@media (max-width: 600px) {
-  button, label { font-size: 13px; padding: 8px 12px; }
-}
+input{display:none}
 </style>
 </head>
 
 <body>
 
 <div class="topbar">
-  <button onclick="startCamera()">📷 Camera</button>
-  <label>
-    🖼 Upload
-    <input type="file" accept="image/*" onchange="loadImage(event)">
-  </label>
+  <button id="camBtn">📷 Camera</button>
+  <label>🖼 Upload<input type="file" id="imgInput" accept="image/*"></label>
 </div>
 
-<video id="video" autoplay muted playsinline hidden></video>
-<img id="image" hidden>
+<video id="video" playsinline muted></video>
+<img id="image">
 <canvas id="canvas"></canvas>
 
 <script>
@@ -125,113 +47,120 @@ const canvas = document.getElementById("canvas");
 const ctx = canvas.getContext("2d");
 
 let model;
-let lastBoxes = [];
-let motionHistory = [];
+let lastBox = null;
+let mode = null;
 
-async function startCamera() {
-  image.hidden = true;
-  video.hidden = false;
-  const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-  video.srcObject = stream;
-  await new Promise(r => video.onloadedmetadata = r);
-  resize(video);
-}
-
-function loadImage(e) {
-  video.hidden = true;
-  image.hidden = false;
-  image.src = URL.createObjectURL(e.target.files[0]);
-  image.onload = () => resize(image);
-}
-
-function resize(source) {
-  canvas.width = source.naturalWidth || source.videoWidth;
-  canvas.height = source.naturalHeight || source.videoHeight;
-}
-
-function movement(box, last) {
-  if (!last) return 0;
-  return Math.abs(box[0]-last[0]) + Math.abs(box[1]-last[1]);
-}
-
-function emotionEngine(label, move, sizeChange) {
-  motionHistory.push(move);
-  if (motionHistory.length > 8) motionHistory.shift();
-  const avg = motionHistory.reduce((a,b)=>a+b,0)/motionHistory.length;
-
-  let emotion = "Alert";
-  let confidence = 0.4;
-  let anim = "calm";
-
-  if (move > 25 && sizeChange > 1800) {
-    emotion = "Angry / Aggressive";
-    confidence = 0.85;
-    anim = "angry";
-  } else if (avg > 18) {
-    emotion = "Stressed / Anxious";
-    confidence = 0.7;
-    anim = "shake";
-  } else if (avg > 10) {
-    emotion = "Playful / Excited";
-    confidence = 0.65;
-    anim = "playful";
-  } else if (avg < 4) {
-    emotion = "Calm / Relaxed";
-    confidence = 0.75;
-    anim = "calm";
-  }
-
-  return { emotion, confidence, anim };
-}
-
-async function detect(source) {
+async function loadModel() {
   if (!model) model = await cocoSsd.load();
+}
 
-  const predictions = await model.detect(source);
+/* ---------------- CAMERA ---------------- */
+
+document.getElementById("camBtn").onclick = async () => {
+  mode = "camera";
+  image.style.display = "none";
+  video.style.display = "block";
+
+  const stream = await navigator.mediaDevices.getUserMedia({ video:true });
+  video.srcObject = stream;
+  await video.play();
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  await loadModel();
+  requestAnimationFrame(cameraLoop);
+};
+
+async function cameraLoop() {
+  if (mode !== "camera") return;
+  await detect(video, true);
+  requestAnimationFrame(cameraLoop);
+}
+
+/* ---------------- IMAGE ---------------- */
+
+document.getElementById("imgInput").onchange = async e => {
+  mode = "image";
+  video.style.display = "none";
+  image.style.display = "block";
+
+  image.src = URL.createObjectURL(e.target.files[0]);
+  await image.decode();
+
+  canvas.width = image.naturalWidth;
+  canvas.height = image.naturalHeight;
+
+  await loadModel();
+  await detect(image, false);
+};
+
+/* ---------------- EMOTION ENGINE ---------------- */
+
+function emotionFromCamera(box) {
+  let emotion = "Calm 🙂", confidence = 0.7;
+
+  if (lastBox) {
+    const move = Math.abs(box[0]-lastBox[0]) + Math.abs(box[1]-lastBox[1]);
+    const sizeJump = Math.abs(box[2]*box[3] - lastBox[2]*lastBox[3]);
+
+    if (move > 30 && sizeJump > 2000) {
+      emotion = "Aggressive 😠"; confidence = 0.85;
+    } else if (move > 18) {
+      emotion = "Excited 😃"; confidence = 0.75;
+    } else if (move < 5) {
+      emotion = "Relaxed 😌"; confidence = 0.8;
+    }
+  }
+  return {emotion, confidence};
+}
+
+function emotionFromImage(score, area) {
+  let emotion = "Alert 👀", confidence = score;
+
+  if (area > 180000) emotion = "Dominant 🐾";
+  else if (score > 0.75) emotion = "Confident 🙂";
+  else emotion = "Cautious 🤔";
+
+  return {emotion, confidence};
+}
+
+/* ---------------- DETECTION ---------------- */
+
+async function detect(source, isCamera) {
+  const preds = await model.detect(source);
   ctx.clearRect(0,0,canvas.width,canvas.height);
 
-  predictions.forEach((p,i)=>{
+  preds.forEach(p => {
     if (!["dog","cat","bird","horse"].includes(p.class)) return;
 
     const [x,y,w,h] = p.bbox;
-    const last = lastBoxes[i];
-    const move = movement(p.bbox,last);
-    const sizeChange = last ? Math.abs(w*h - last[2]*last[3]) : 0;
+    const area = w*h;
 
-    const { emotion, confidence, anim } =
-      emotionEngine(p.class, move, sizeChange);
+    const result = isCamera
+      ? emotionFromCamera(p.bbox)
+      : emotionFromImage(p.score, area);
 
-    // Box
     ctx.strokeStyle = "#00ffd5";
     ctx.lineWidth = 2;
     ctx.strokeRect(x,y,w,h);
 
-    // Card
     ctx.fillStyle = "rgba(0,0,0,.65)";
-    ctx.fillRect(x,y-58,w,58);
+    ctx.fillRect(x,y-50,w,50);
 
     ctx.fillStyle = "white";
     ctx.font = "bold 14px sans-serif";
-    ctx.fillText(p.class.toUpperCase(),x+6,y-36);
+    ctx.fillText(p.class.toUpperCase(),x+6,y-30);
 
     ctx.fillStyle = "#00ffd5";
-    ctx.font = "13px sans-serif";
-    ctx.fillText(emotion,x+6,y-18);
+    ctx.fillText(result.emotion,x+6,y-12);
 
-    // Confidence bar
-    ctx.fillStyle = "rgba(255,255,255,.3)";
-    ctx.fillRect(x+6,y-10,w-12,4);
     ctx.fillStyle = "#00ffd5";
-    ctx.fillRect(x+6,y-10,(w-12)*confidence,4);
+    ctx.fillRect(x+6,y-6,(w-12)*result.confidence,4);
+
+    lastBox = p.bbox;
   });
-
-  lastBoxes = predictions.map(p=>p.bbox);
-
-  if (!video.hidden) requestAnimationFrame(()=>detect(video));
 }
-
-video.onplay = ()=>detect(video);
-image.onload = ()=>detect(image);
 </script>
 
 </body>

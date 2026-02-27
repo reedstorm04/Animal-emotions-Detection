@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Animal Emotion AI — Back Camera</title>
+<title>Animal Emotion AI — Forced Back Camera</title>
 
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.14.0"></script>
 <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
@@ -79,18 +79,43 @@ async function loadModel() {
   if (!model) model = await cocoSsd.load();
 }
 
-/* ================= CAMERA ================= */
+/* ================= FORCE BACK CAMERA ================= */
+
+async function getBackCameraStream() {
+  // Step 1: Ask permission (required to see device labels)
+  await navigator.mediaDevices.getUserMedia({ video: true });
+
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const cams = devices.filter(d => d.kind === "videoinput");
+
+  // Try to find rear camera by label
+  let backCam = cams.find(c =>
+    c.label.toLowerCase().includes("back") ||
+    c.label.toLowerCase().includes("rear") ||
+    c.label.toLowerCase().includes("environment")
+  );
+
+  // Fallback: last camera is usually rear
+  if (!backCam && cams.length > 1) {
+    backCam = cams[cams.length - 1];
+  }
+
+  return navigator.mediaDevices.getUserMedia({
+    video: backCam
+      ? { deviceId: { exact: backCam.deviceId } }
+      : { facingMode: "environment" },
+    audio: false
+  });
+}
+
+/* ================= CAMERA MODE ================= */
 
 document.getElementById("camBtn").onclick = async () => {
   mode = "camera";
   image.style.display = "none";
   video.style.display = "block";
 
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: "environment" },
-    audio: false
-  });
-
+  const stream = await getBackCameraStream();
   video.srcObject = stream;
   await video.play();
 
@@ -107,7 +132,7 @@ async function cameraLoop() {
   requestAnimationFrame(cameraLoop);
 }
 
-/* ================= IMAGE ================= */
+/* ================= IMAGE MODE ================= */
 
 document.getElementById("imgInput").onchange = async e => {
   mode = "image";
